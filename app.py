@@ -1,6 +1,7 @@
 import tkinter as tk
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import time
+import asyncio
+from pysnmp.hlapi.asyncio import *
 
 class CiscoSentinel(tk.Tk):
     def __init__(self):
@@ -19,6 +20,13 @@ class CiscoSentinel(tk.Tk):
             'traffic_in': [],
             'traffic_out': [],
             'time': []
+        }
+
+        # Previous data for calculating traffic rates
+        self.prev_data = {
+            'traffic_in': 0.0,
+            'traffic_out': 0.0,
+            'time': time.time()
         }
 
         self.create_ui()
@@ -58,6 +66,51 @@ class CiscoSentinel(tk.Tk):
         if ylim:
             ax.set_ylim(ylim)
 
+    async def snmp_get(self, oid):
+        try:
+            iterator = await get_cmd(
+                SnmpEngine(),
+                CommunityData("public", mpModel=0),
+                await UdpTransportTarget.create((self.snmp_host.get(), 161)),
+                ContextData(),
+                ObjectType(ObjectIdentity(oid)),
+            )
+
+            errorIndication, _, _, varBinds = iterator
+
+            if errorIndication:
+                return f"Error: {errorIndication}"
+            return varBinds[0][1]
+        except Exception as e:
+            return f"Exception: {str(e)}"
+
+    async def fetch_data(self):
+        cpu_usage = await self.snmp_get("1.3.6.1.4.1.9.9.109.1.1.1.1.8.1")
+        self.data['cpu'].append(float(cpu_usage))
+
+        memory_used = float(await self.snmp_get("1.3.6.1.4.1.9.9.48.1.1.1.5.1"))
+        memory_free = float(await self.snmp_get("1.3.6.1.4.1.9.9.48.1.1.1.6.1"))
+        memory_percent = int((memory_used * 100) / (memory_used + memory_free))
+        self.data['memory'].append(memory_percent)
+
+        traffic_in = await self.snmp_get("1.3.6.1.2.1.2.2.1.10.1")
+        traffic_out = await self.snmp_get("1.3.6.1.2.1.2.2.1.16.1")
+        
+        current_time = time.time()
+        elapsed_time = current_time - self.prev_data['time']
+
+        self.data['traffic_in'].append(float((float(traffic_in) - self.prev_data['traffic_in']) * 8 / elapsed_time) / 1000)
+        self.data['traffic_out'].append(float((float(traffic_out) - self.prev_data['traffic_out']) * 8 / elapsed_time) / 1000)
+
+        self.prev_data.update({
+            'traffic_in': traffic_in,
+            'traffic_out': traffic_out,
+            'time': current_time
+        })
+
+        self.data['time'].append(current_time)
+        self.update_graphs()
+
     def connect(self):
         if self.snmp_host.get():
             self.connection_status.set("Connected")
@@ -66,6 +119,30 @@ class CiscoSentinel(tk.Tk):
             self.connection_status.set("Disconnected")
             self.status_label.config(fg="red")
 
+    def update_graphs(self):
+        self.ax_cpu.clear()
+        self.ax_memory.clear()
+        self.ax_traffic_in.clear()
+        self.ax_traffic_out.clear()
+
+        self.configure_plot(self.ax_cpu, "CPU Usage (%)", "CPU Usage (%)", (0, 100))
+        self.configure_plot(self.ax_memory, "Memory Usage (%)", "Memory Usage (%)", (0, 100))
+        self.configure_plot(self.ax_traffic_in, "Traffic In (kbps)", "Traffic In (kbps)", None)
+        self.configure_plot(self.ax_traffic_out, "Traffic Out (kbps)", "Traffic Out (kbps)", None)
+
+        self.ax_cpu.plot(self.data['time'], self.data['cpu'], label="CPU Usage")
+        self.ax_memory.plot(self.data['time'], self.data['memory'], label="Memory Usage")
+        self.ax_traffic_in.plot(self.data['time'], self.data['traffic_in'], label="Traffic In")
+        self.ax_traffic_out.plot(self.data['time'], self.data['traffic_out'], label="Traffic Out")
+
+        self.canvas.draw()
+
+    def start_monitoring(self):
+        loop = asyncio.get_event_loop()
+        loop.create_task(self.fetch_data())
+        loop.run_forever()
+
 if __name__ == "__main__":
     app = CiscoSentinel()
+    app.after(1000, app.start_monitoring)  # Start monitoring after 1 second
     app.mainloop()
