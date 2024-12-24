@@ -1,0 +1,3 @@
+pysnmp
+matplotlib
+async_tkinter_loop
