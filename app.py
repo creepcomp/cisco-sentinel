@@ -10,7 +10,7 @@ class CiscoSentinel(tk.Tk):
     def __init__(self):
         super().__init__()
 
-        self.title("Network Device Health Monitor")
+        self.title("Cisco Sentinel (Developed by Parsa Rostamzadeh)")
         self.geometry("1200x800")
 
         self.snmp_host = tk.StringVar(value="192.168.10.100")
