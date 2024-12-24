@@ -2,6 +2,9 @@ import tkinter as tk
 import time
 import asyncio
 from pysnmp.hlapi.asyncio import *
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from async_tkinter_loop import async_handler, async_mainloop
 
 class CiscoSentinel(tk.Tk):
     def __init__(self):
@@ -35,7 +38,7 @@ class CiscoSentinel(tk.Tk):
         # Create plots
         self.fig, axs = plt.subplots(2, 2)
         self.ax_cpu, self.ax_memory, self.ax_traffic_in, self.ax_traffic_out = axs.flatten()
-
+        
         # Plot configurations
         self.configure_plot(self.ax_cpu, "CPU Usage (%)", "CPU Usage (%)", (0, 100))
         self.configure_plot(self.ax_memory, "Memory Usage (%)", "Memory Usage (%)", (0, 100))
@@ -111,38 +114,37 @@ class CiscoSentinel(tk.Tk):
         self.data['time'].append(current_time)
         self.update_graphs()
 
+    def update_graphs(self):
+        self.plot_data(self.ax_cpu, self.data['cpu'], "CPU Usage")
+        self.plot_data(self.ax_memory, self.data['memory'], "Memory Usage")
+        self.plot_data(self.ax_traffic_in, self.data['traffic_in'], "Traffic In")
+        self.plot_data(self.ax_traffic_out, self.data['traffic_out'], "Traffic Out")
+
+        self.canvas.draw()
+
+    def plot_data(self, ax, data, label):
+        ax.clear()
+        ax.plot(self.data['time'], data, label=label)
+        ax.set_title(f"{label} ({data[-1]:.2f})")
+        ax.set_xlabel("Time (seconds)")
+        ax.set_ylabel(label)
+        ax.legend()
+
     def connect(self):
         if self.snmp_host.get():
             self.connection_status.set("Connected")
             self.status_label.config(fg="green")
+            self.start_monitoring()
         else:
             self.connection_status.set("Disconnected")
             self.status_label.config(fg="red")
 
-    def update_graphs(self):
-        self.ax_cpu.clear()
-        self.ax_memory.clear()
-        self.ax_traffic_in.clear()
-        self.ax_traffic_out.clear()
-
-        self.configure_plot(self.ax_cpu, "CPU Usage (%)", "CPU Usage (%)", (0, 100))
-        self.configure_plot(self.ax_memory, "Memory Usage (%)", "Memory Usage (%)", (0, 100))
-        self.configure_plot(self.ax_traffic_in, "Traffic In (kbps)", "Traffic In (kbps)", None)
-        self.configure_plot(self.ax_traffic_out, "Traffic Out (kbps)", "Traffic Out (kbps)", None)
-
-        self.ax_cpu.plot(self.data['time'], self.data['cpu'], label="CPU Usage")
-        self.ax_memory.plot(self.data['time'], self.data['memory'], label="Memory Usage")
-        self.ax_traffic_in.plot(self.data['time'], self.data['traffic_in'], label="Traffic In")
-        self.ax_traffic_out.plot(self.data['time'], self.data['traffic_out'], label="Traffic Out")
-
-        self.canvas.draw()
-
-    def start_monitoring(self):
-        loop = asyncio.get_event_loop()
-        loop.create_task(self.fetch_data())
-        loop.run_forever()
+    @async_handler
+    async def start_monitoring(self):
+        while True:
+            await self.fetch_data()
+            await asyncio.sleep(1)
 
 if __name__ == "__main__":
     app = CiscoSentinel()
-    app.after(1000, app.start_monitoring)  # Start monitoring after 1 second
-    app.mainloop()
+    async_mainloop(app)
